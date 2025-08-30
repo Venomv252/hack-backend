@@ -48,18 +48,16 @@ const connectDB = async () => {
   try {
     const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/smartsafetyband';
     
+    // Simple and compatible MongoDB connection options
     const options = {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
       serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
       socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
-      bufferMaxEntries: 0, // Disable mongoose buffering
-      bufferCommands: false, // Disable mongoose buffering
     };
 
     await mongoose.connect(mongoURI, options);
     console.log('✅ MongoDB Connected Successfully');
     console.log(`📍 Database: ${mongoose.connection.name}`);
+    console.log(`🔗 Connection state: ${mongoose.connection.readyState}`);
   } catch (error) {
     console.error('❌ MongoDB Connection Error:', error.message);
     console.error('Full error:', error);
