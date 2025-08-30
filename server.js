@@ -890,6 +890,136 @@ app.get('/api/sensor/analytics', auth, async (req, res) => {
   }
 });
 
+// Get all ESP32 sensor data for recent activity
+app.get('/api/sensor/esp32/recent', auth, async (req, res) => {
+  try {
+    const { limit = 50, skip = 0 } = req.query;
+
+    // Get all sensor data from ESP32 devices
+    const sensorData = await SensorData.find({ 
+      deviceId: { $in: ['ESP32_001', 'TEST_DEVICE'] } 
+    })
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip(parseInt(skip))
+      .populate('userId', 'name email');
+
+    const total = await SensorData.countDocuments({ 
+      deviceId: { $in: ['ESP32_001', 'TEST_DEVICE'] } 
+    });
+
+    // Format the data for recent activity display
+    const formattedData = sensorData.map(data => ({
+      id: data._id,
+      timestamp: data.createdAt,
+      deviceId: data.deviceId,
+      user: data.userId ? {
+        name: data.userId.name,
+        email: data.userId.email
+      } : null,
+      accelerometer: data.accelerometer,
+      gyroscope: data.gyroscope,
+      location: data.location,
+      heartRate: data.heartRate,
+      temperature: data.temperature,
+      batteryLevel: data.batteryLevel,
+      emergencyTriggered: data.emergencyTriggered,
+      fallDetected: data.fallDetected,
+      // Calculate derived values
+      totalAcceleration: data.accelerometer ? 
+        Math.sqrt(data.accelerometer.x**2 + data.accelerometer.y**2 + data.accelerometer.z**2) : null,
+      totalRotation: data.gyroscope ? 
+        Math.sqrt(data.gyroscope.x**2 + data.gyroscope.y**2 + data.gyroscope.z**2) : null,
+      status: data.emergencyTriggered ? 'emergency' : 
+              data.fallDetected ? 'fall' : 
+              'normal'
+    }));
+
+    res.json({
+      data: formattedData,
+      total,
+      hasMore: (parseInt(skip) + parseInt(limit)) < total,
+      summary: {
+        totalReadings: total,
+        emergencyCount: formattedData.filter(d => d.emergencyTriggered).length,
+        fallCount: formattedData.filter(d => d.fallDetected).length,
+        devicesActive: [...new Set(formattedData.map(d => d.deviceId))].length
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching ESP32 recent data:', error.message);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Test endpoint to generate fake sensor data with GPS
+app.post('/api/sensor/test', async (req, res) => {
+  try {
+    // Find demo user
+    let user = await User.findOne({ email: 'rahul.sharma@smartsafetyband.com' });
+    
+    if (!user) {
+      return res.status(404).json({ message: 'Demo user not found. Please login first.' });
+    }
+
+    // Generate fake sensor data with GPS
+    const fakeData = {
+      accelerometer: {
+        x: (Math.random() - 0.5) * 20, // -10 to 10
+        y: (Math.random() - 0.5) * 20,
+        z: 9.8 + (Math.random() - 0.5) * 2 // Around 9.8 with variation
+      },
+      gyroscope: {
+        x: (Math.random() - 0.5) * 200, // -100 to 100
+        y: (Math.random() - 0.5) * 200,
+        z: (Math.random() - 0.5) * 200
+      },
+      location: {
+        latitude: 28.6118372 + (Math.random() - 0.5) * 0.01, // Delhi area
+        longitude: 77.0377945 + (Math.random() - 0.5) * 0.01,
+        accuracy: Math.floor(Math.random() * 20) + 5 // 5-25 meters
+      },
+      heartRate: Math.floor(Math.random() * 40) + 60, // 60-100 BPM
+      temperature: 36.5 + (Math.random() - 0.5) * 2, // 35.5-37.5°C
+      batteryLevel: Math.floor(Math.random() * 100) + 1 // 1-100%
+    };
+
+    // Create sensor data entry
+    const sensorData = new SensorData({
+      userId: user._id,
+      deviceId: 'TEST_DEVICE',
+      ...fakeData,
+      timestamp: new Date()
+    });
+
+    await sensorData.save();
+
+    // Create sync activity
+    const syncActivity = new Activity({
+      userId: user._id,
+      type: 'sync',
+      message: 'Test sensor data generated with GPS',
+      status: 'success',
+      metadata: { 
+        deviceId: 'TEST_DEVICE',
+        ...fakeData,
+        timestamp: new Date()
+      }
+    });
+    await syncActivity.save();
+
+    res.status(201).json({
+      message: 'Test sensor data created successfully',
+      data: sensorData,
+      fakeData
+    });
+
+  } catch (error) {
+    console.error('Test data generation error:', error.message);
+    res.status(500).json({ message: 'Failed to generate test data' });
+  }
+});
+
 // Demo login endpoint for testing
 app.post('/api/users/demo-login', async (req, res) => {
   try {
