@@ -37,7 +37,7 @@ app.use((req, res, next) => {
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Error:', err);
-  res.status(500).json({ 
+  res.status(500).json({
     message: 'Internal server error',
     error: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
   });
@@ -47,7 +47,7 @@ app.use((err, req, res, next) => {
 const connectDB = async () => {
   try {
     const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/smartsafetyband';
-    
+
     // Simple and compatible MongoDB connection options
     const options = {
       serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
@@ -482,9 +482,9 @@ app.post('/receive', async (req, res) => {
     console.log('📡 Raw ESP32 request body:', JSON.stringify(req.body, null, 2));
     console.log('📋 Request headers:', JSON.stringify(req.headers, null, 2));
     console.log('🌐 Request IP:', req.ip || req.connection.remoteAddress);
-    
+
     const { accelerometer, gyroscope, latitude, longitude, timestamp, heartRate, temperature, batteryLevel } = req.body;
-    
+
     // Extract values from nested objects
     const accX = accelerometer?.x || 0;
     const accY = accelerometer?.y || 0;
@@ -504,9 +504,9 @@ app.post('/receive', async (req, res) => {
     });
 
     // Calculate derived values
-    const totalAcceleration = Math.sqrt(accX*accX + accY*accY + accZ*accZ);
-    const totalRotation = Math.sqrt(gyroX*gyroX + gyroY*gyroY + gyroZ*gyroZ);
-    
+    const totalAcceleration = Math.sqrt(accX * accX + accY * accY + accZ * accZ);
+    const totalRotation = Math.sqrt(gyroX * gyroX + gyroY * gyroY + gyroZ * gyroZ);
+
     console.log('📊 Calculated values:', {
       totalAcceleration: totalAcceleration.toFixed(2) + 'g',
       totalRotation: totalRotation.toFixed(2) + '°/s'
@@ -515,7 +515,7 @@ app.post('/receive', async (req, res) => {
     // For now, we'll use demo user since ESP32 doesn't send user info
     // You can modify this to include deviceId in your ESP32 code later
     let user = await User.findOne({ email: 'rahul.sharma@smartsafetyband.com' });
-    
+
     if (!user) {
       // Create demo user if doesn't exist
       const salt = await bcrypt.genSalt(10);
@@ -590,20 +590,19 @@ app.post('/receive', async (req, res) => {
     }
 
     // Check for fall detection based on accelerometer data
-    const totalAcceleration = Math.sqrt(accX*accX + accY*accY + accZ*accZ);
     let fallDetected = false;
     let emergencyTriggered = false;
 
     // Simple fall detection algorithm
     if (totalAcceleration > 15 || totalAcceleration < 2) {
       fallDetected = true;
-      
+
       const fallActivity = new Activity({
         userId: user._id,
         type: 'emergency',
         message: `Potential fall detected! Total acceleration: ${totalAcceleration.toFixed(2)}g`,
         status: 'warning',
-        metadata: { 
+        metadata: {
           deviceId: 'ESP32_001',
           accelerometer: { x: accX, y: accY, z: accZ },
           gyroscope: { x: gyroX, y: gyroY, z: gyroZ },
@@ -617,16 +616,15 @@ app.post('/receive', async (req, res) => {
     }
 
     // Check for rapid rotation (potential emergency)
-    const totalRotation = Math.sqrt(gyroX*gyroX + gyroY*gyroY + gyroZ*gyroZ);
     if (totalRotation > 200) {
       emergencyTriggered = true;
-      
+
       const emergencyActivity = new Activity({
         userId: user._id,
         type: 'emergency',
         message: `Rapid movement detected! Total rotation: ${totalRotation.toFixed(2)}°/s`,
         status: 'error',
-        metadata: { 
+        metadata: {
           deviceId: 'ESP32_001',
           accelerometer: { x: accX, y: accY, z: accZ },
           gyroscope: { x: gyroX, y: gyroY, z: gyroZ },
@@ -645,7 +643,7 @@ app.post('/receive', async (req, res) => {
       type: 'sync',
       message: 'ESP32 sensor data received',
       status: 'success',
-      metadata: { 
+      metadata: {
         deviceId: 'ESP32_001',
         accelerometer: { x: accX, y: accY, z: accZ },
         gyroscope: { x: gyroX, y: gyroY, z: gyroZ },
@@ -656,7 +654,7 @@ app.post('/receive', async (req, res) => {
         timestamp: timestamp ? new Date(parseInt(timestamp)) : new Date()
       }
     });
-    
+
     try {
       await syncActivity.save();
       console.log('📝 Activity record created successfully');
@@ -684,15 +682,15 @@ app.post('/receive', async (req, res) => {
     console.log('🎉 ESP32 DATA PROCESSING COMPLETE!');
     console.log('📤 Sending response:', JSON.stringify(response, null, 2));
     console.log('=== END ESP32 DATA PROCESSING ===\n');
-    
+
     res.status(200).json(response);
 
   } catch (error) {
     console.error('❌ ESP32 data processing error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       status: 'error',
       message: 'Failed to process ESP32 data',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -700,18 +698,18 @@ app.post('/receive', async (req, res) => {
 // Receive sensor data from device (no auth required for device)
 app.post('/api/sensor/data', async (req, res) => {
   try {
-    const { 
-      deviceId, 
-      userId, 
-      heartRate, 
-      temperature, 
-      accelerometer, 
-      gyroscope, 
-      location, 
+    const {
+      deviceId,
+      userId,
+      heartRate,
+      temperature,
+      accelerometer,
+      gyroscope,
+      location,
       batteryLevel,
       emergencyTriggered,
       fallDetected,
-      timestamp 
+      timestamp
     } = req.body;
 
     // Validate required fields
@@ -881,11 +879,11 @@ app.get('/api/sensor/history', auth, async (req, res) => {
 app.get('/api/sensor/analytics', auth, async (req, res) => {
   try {
     const { period = '24h' } = req.query;
-    
+
     // Calculate date range based on period
     const now = new Date();
     let startDate;
-    
+
     switch (period) {
       case '1h':
         startDate = new Date(now.getTime() - 60 * 60 * 1000);
@@ -956,7 +954,7 @@ const seedSensorData = async () => {
   try {
     // Find or create demo user
     let user = await User.findOne({ email: 'rahul.sharma@smartsafetyband.com' });
-    
+
     if (!user) {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash('demo123', salt);
@@ -1023,7 +1021,7 @@ const seedSensorData = async () => {
         type: 'sync',
         message: 'ESP32 sensor data received (Sample 1)',
         status: 'success',
-        metadata: { 
+        metadata: {
           deviceId: 'ESP32_001',
           accelerometer: sampleData[0].accelerometer,
           gyroscope: sampleData[0].gyroscope,
@@ -1037,7 +1035,7 @@ const seedSensorData = async () => {
         type: 'sync',
         message: 'ESP32 sensor data received (Sample 2)',
         status: 'success',
-        metadata: { 
+        metadata: {
           deviceId: 'ESP32_001',
           accelerometer: sampleData[1].accelerometer,
           gyroscope: sampleData[1].gyroscope,
@@ -1078,7 +1076,7 @@ app.get('/api/sensor/debug', async (req, res) => {
     const count = await SensorData.countDocuments();
     const latest = await SensorData.findOne().sort({ createdAt: -1 });
     const all = await SensorData.find().sort({ createdAt: -1 }).limit(10);
-    
+
     res.json({
       totalCount: count,
       latestRecord: latest,
@@ -1096,15 +1094,15 @@ app.get('/api/sensor/debug', async (req, res) => {
 app.get('/api/sensor/dashboard', auth, async (req, res) => {
   try {
     // Get latest sensor data
-    const latestData = await SensorData.findOne({ 
-      deviceId: { $in: ['ESP32_001', 'TEST_DEVICE'] } 
+    const latestData = await SensorData.findOne({
+      deviceId: { $in: ['ESP32_001', 'TEST_DEVICE'] }
     })
       .sort({ createdAt: -1 })
       .populate('userId', 'name email');
 
     // Get recent sensor data (last 10 readings)
-    const recentData = await SensorData.find({ 
-      deviceId: { $in: ['ESP32_001', 'TEST_DEVICE'] } 
+    const recentData = await SensorData.find({
+      deviceId: { $in: ['ESP32_001', 'TEST_DEVICE'] }
     })
       .sort({ createdAt: -1 })
       .limit(10)
@@ -1154,20 +1152,20 @@ app.get('/api/sensor/dashboard', auth, async (req, res) => {
         batteryLevel: latestData.batteryLevel,
         emergencyTriggered: latestData.emergencyTriggered,
         fallDetected: latestData.fallDetected,
-        totalAcceleration: latestData.accelerometer ? 
-          Math.sqrt(latestData.accelerometer.x**2 + latestData.accelerometer.y**2 + latestData.accelerometer.z**2) : null,
-        totalRotation: latestData.gyroscope ? 
-          Math.sqrt(latestData.gyroscope.x**2 + latestData.gyroscope.y**2 + latestData.gyroscope.z**2) : null
+        totalAcceleration: latestData.accelerometer ?
+          Math.sqrt(latestData.accelerometer.x ** 2 + latestData.accelerometer.y ** 2 + latestData.accelerometer.z ** 2) : null,
+        totalRotation: latestData.gyroscope ?
+          Math.sqrt(latestData.gyroscope.x ** 2 + latestData.gyroscope.y ** 2 + latestData.gyroscope.z ** 2) : null
       } : null,
       recent: recentData.map(data => ({
         id: data._id,
         timestamp: data.createdAt,
         deviceId: data.deviceId,
         status: data.emergencyTriggered ? 'emergency' : data.fallDetected ? 'fall' : 'normal',
-        totalAcceleration: data.accelerometer ? 
-          Math.sqrt(data.accelerometer.x**2 + data.accelerometer.y**2 + data.accelerometer.z**2) : null,
-        totalRotation: data.gyroscope ? 
-          Math.sqrt(data.gyroscope.x**2 + data.gyroscope.y**2 + data.gyroscope.z**2) : null
+        totalAcceleration: data.accelerometer ?
+          Math.sqrt(data.accelerometer.x ** 2 + data.accelerometer.y ** 2 + data.accelerometer.z ** 2) : null,
+        totalRotation: data.gyroscope ?
+          Math.sqrt(data.gyroscope.x ** 2 + data.gyroscope.y ** 2 + data.gyroscope.z ** 2) : null
       })),
       summary,
       dataRetentionInfo: {
@@ -1188,16 +1186,16 @@ app.get('/api/sensor/esp32/recent', auth, async (req, res) => {
     const { limit = 50, skip = 0 } = req.query;
 
     // Get all sensor data from ESP32 devices
-    const sensorData = await SensorData.find({ 
-      deviceId: { $in: ['ESP32_001', 'TEST_DEVICE'] } 
+    const sensorData = await SensorData.find({
+      deviceId: { $in: ['ESP32_001', 'TEST_DEVICE'] }
     })
       .sort({ createdAt: -1 })
       .limit(parseInt(limit))
       .skip(parseInt(skip))
       .populate('userId', 'name email');
 
-    const total = await SensorData.countDocuments({ 
-      deviceId: { $in: ['ESP32_001', 'TEST_DEVICE'] } 
+    const total = await SensorData.countDocuments({
+      deviceId: { $in: ['ESP32_001', 'TEST_DEVICE'] }
     });
 
     // Format the data for recent activity display
@@ -1218,13 +1216,13 @@ app.get('/api/sensor/esp32/recent', auth, async (req, res) => {
       emergencyTriggered: data.emergencyTriggered,
       fallDetected: data.fallDetected,
       // Calculate derived values
-      totalAcceleration: data.accelerometer ? 
-        Math.sqrt(data.accelerometer.x**2 + data.accelerometer.y**2 + data.accelerometer.z**2) : null,
-      totalRotation: data.gyroscope ? 
-        Math.sqrt(data.gyroscope.x**2 + data.gyroscope.y**2 + data.gyroscope.z**2) : null,
-      status: data.emergencyTriggered ? 'emergency' : 
-              data.fallDetected ? 'fall' : 
-              'normal'
+      totalAcceleration: data.accelerometer ?
+        Math.sqrt(data.accelerometer.x ** 2 + data.accelerometer.y ** 2 + data.accelerometer.z ** 2) : null,
+      totalRotation: data.gyroscope ?
+        Math.sqrt(data.gyroscope.x ** 2 + data.gyroscope.y ** 2 + data.gyroscope.z ** 2) : null,
+      status: data.emergencyTriggered ? 'emergency' :
+        data.fallDetected ? 'fall' :
+          'normal'
     }));
 
     res.json({
@@ -1249,7 +1247,7 @@ app.post('/api/sensor/test', async (req, res) => {
   try {
     // Find demo user
     let user = await User.findOne({ email: 'rahul.sharma@smartsafetyband.com' });
-    
+
     if (!user) {
       return res.status(404).json({ message: 'Demo user not found. Please login first.' });
     }
@@ -1292,7 +1290,7 @@ app.post('/api/sensor/test', async (req, res) => {
       type: 'sync',
       message: 'Test sensor data generated with GPS',
       status: 'success',
-      metadata: { 
+      metadata: {
         deviceId: 'TEST_DEVICE',
         ...fakeData,
         timestamp: new Date()
@@ -1370,8 +1368,8 @@ app.post('/api/users/demo-login', async (req, res) => {
 
 // Health check endpoint for Render
 app.get('/', (req, res) => {
-  res.json({ 
-    message: 'Smart Safety Band API is running!', 
+  res.json({
+    message: 'Smart Safety Band API is running!',
     status: 'healthy',
     timestamp: new Date().toISOString()
   });
@@ -1379,8 +1377,8 @@ app.get('/', (req, res) => {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'healthy', 
+  res.json({
+    status: 'healthy',
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
     mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
@@ -1389,7 +1387,7 @@ app.get('/health', (req, res) => {
 
 // Catch-all route for undefined endpoints
 app.use('*', (req, res) => {
-  res.status(404).json({ 
+  res.status(404).json({
     message: 'Route not found',
     availableRoutes: [
       'GET /',
@@ -1418,7 +1416,7 @@ const cleanupOldSensorData = async () => {
     const result = await SensorData.deleteMany({
       createdAt: { $lt: thirtyMinutesAgo }
     });
-    
+
     if (result.deletedCount > 0) {
       console.log(`🧹 Cleaned up ${result.deletedCount} old sensor data records`);
     }
@@ -1435,10 +1433,10 @@ const startServer = async () => {
   try {
     console.log('🚀 Starting Smart SafetyBand API...');
     console.log('📊 Environment:', process.env.NODE_ENV || 'development');
-    
+
     // Connect to MongoDB
     await connectDB();
-    
+
     // Seed sample data on startup
     console.log('🌱 Seeding sample sensor data...');
     try {
@@ -1447,11 +1445,11 @@ const startServer = async () => {
     } catch (seedError) {
       console.error('⚠️ Warning: Could not seed sample data:', seedError.message);
     }
-    
+
     // Start the server
     const PORT = process.env.PORT || 5000;
     const HOST = process.env.HOST || '0.0.0.0';
-    
+
     const server = app.listen(PORT, HOST, () => {
       console.log(`✅ Server running on ${HOST}:${PORT}`);
       console.log(`🌐 Health check: http://${HOST}:${PORT}/health`);
