@@ -1449,6 +1449,115 @@ app.post('/api/emergency/share-location', auth, async (req, res) => {
   }
 });
 
+// Test emergency endpoint - Simulates SMS sending without Twilio
+app.post('/api/emergency/share-location-test', auth, async (req, res) => {
+  try {
+    console.log('🧪 Test emergency location share request received for user:', req.user.id);
+    
+    // Get user with emergency contacts
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      console.log('❌ User not found:', req.user.id);
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    console.log('✅ User found:', user.name, 'Emergency contacts:', user.emergencyContacts?.length || 0);
+
+    // Get latest sensor data for location
+    const latestSensorData = await SensorData.findOne({ userId: req.user.id })
+      .sort({ createdAt: -1 });
+
+    if (!latestSensorData || !latestSensorData.location) {
+      console.log('❌ No location data available for user:', req.user.id);
+      return res.status(404).json({ message: 'No location data available' });
+    }
+
+    console.log('✅ Location data found:', latestSensorData.location);
+
+    const { latitude, longitude } = latestSensorData.location;
+    const googleMapsLink = `https://maps.google.com/maps?q=${latitude},${longitude}`;
+    
+    // Create emergency message
+    const emergencyMessage = `🚨 EMERGENCY ALERT 🚨\n\n${user.name} has triggered an emergency alert!\n\nLocation: ${googleMapsLink}\n\nCoordinates: ${latitude}, ${longitude}\n\nTime: ${new Date().toLocaleString()}\n\nPlease check on them immediately!`;
+
+    const results = [];
+    const errors = [];
+
+    // Simulate SMS sending to all emergency contacts
+    for (const contact of user.emergencyContacts) {
+      try {
+        // Format phone number (ensure it has country code)
+        let phoneNumber = contact.phone;
+        if (!phoneNumber.startsWith('+')) {
+          // Assume Indian number if no country code
+          phoneNumber = phoneNumber.replace(/^\+?91/, '+91');
+          if (!phoneNumber.startsWith('+91')) {
+            phoneNumber = '+91' + phoneNumber.replace(/\D/g, '');
+          }
+        }
+
+        // Simulate SMS sending (no actual SMS sent)
+        const mockMessageSid = `SM${Math.random().toString(36).substr(2, 32)}`;
+
+        results.push({
+          contact: contact.name,
+          phone: phoneNumber,
+          status: 'simulated',
+          messageSid: mockMessageSid
+        });
+
+        console.log(`✅ [SIMULATED] Emergency SMS sent to ${contact.name} (${phoneNumber}): ${mockMessageSid}`);
+
+      } catch (smsError) {
+        console.error(`❌ Failed to simulate SMS to ${contact.name} (${contact.phone}):`, smsError.message);
+        errors.push({
+          contact: contact.name,
+          phone: contact.phone,
+          error: smsError.message
+        });
+      }
+    }
+
+    // Log emergency action
+    const emergencyLog = new SyncActivity({
+      userId: req.user.id,
+      action: 'emergency_location_shared_test',
+      status: results.length > 0 ? 'success' : 'failed',
+      metadata: {
+        location: { latitude, longitude },
+        contactsNotified: results.length,
+        totalContacts: user.emergencyContacts.length,
+        results,
+        errors,
+        note: 'Test mode - no actual SMS sent'
+      }
+    });
+    await emergencyLog.save();
+
+    res.json({
+      message: 'Emergency location sharing completed (TEST MODE - No actual SMS sent)',
+      location: { latitude, longitude },
+      googleMapsLink,
+      results,
+      errors,
+      summary: {
+        totalContacts: user.emergencyContacts.length,
+        successful: results.length,
+        failed: errors.length
+      },
+      testMode: true
+    });
+
+  } catch (error) {
+    console.error('🧪 Test emergency SMS error:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      message: 'Failed to send test emergency SMS',
+      error: error.message 
+    });
+  }
+});
+
 // Demo login endpoint for testing
 app.post('/api/users/demo-login', async (req, res) => {
   try {
