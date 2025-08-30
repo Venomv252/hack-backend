@@ -3,7 +3,14 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const twilio = require('twilio');
 require('dotenv').config();
+
+// Twilio Configuration
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || 'your_twilio_account_sid';
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || 'your_twilio_auth_token';
+const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || '+15005550006';
+const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 // Environment validation
 const requiredEnvVars = ['MONGODB_URI'];
@@ -1308,6 +1315,107 @@ app.post('/api/sensor/test', async (req, res) => {
   } catch (error) {
     console.error('Test data generation error:', error.message);
     res.status(500).json({ message: 'Failed to generate test data' });
+  }
+});
+
+// Emergency SMS endpoint - Share location with emergency contacts
+app.post('/api/emergency/share-location', auth, async (req, res) => {
+  try {
+    // Get user with emergency contacts
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Get latest sensor data for location
+    const latestSensorData = await SensorData.findOne({ userId: req.user.id })
+      .sort({ createdAt: -1 });
+
+    if (!latestSensorData || !latestSensorData.location) {
+      return res.status(404).json({ message: 'No location data available' });
+    }
+
+    const { latitude, longitude } = latestSensorData.location;
+    const googleMapsLink = `https://maps.google.com/maps?q=${latitude},${longitude}`;
+    
+    // Create emergency message
+    const emergencyMessage = `🚨 EMERGENCY ALERT 🚨\n\n${user.name} has triggered an emergency alert!\n\nLocation: ${googleMapsLink}\n\nCoordinates: ${latitude}, ${longitude}\n\nTime: ${new Date().toLocaleString()}\n\nPlease check on them immediately!`;
+
+    const results = [];
+    const errors = [];
+
+    // Send SMS to all emergency contacts
+    for (const contact of user.emergencyContacts) {
+      try {
+        // Format phone number (ensure it has country code)
+        let phoneNumber = contact.phone;
+        if (!phoneNumber.startsWith('+')) {
+          // Assume Indian number if no country code
+          phoneNumber = phoneNumber.replace(/^\+?91/, '+91');
+          if (!phoneNumber.startsWith('+91')) {
+            phoneNumber = '+91' + phoneNumber.replace(/\D/g, '');
+          }
+        }
+
+        const message = await twilioClient.messages.create({
+          body: emergencyMessage,
+          from: TWILIO_PHONE_NUMBER,
+          to: phoneNumber
+        });
+
+        results.push({
+          contact: contact.name,
+          phone: phoneNumber,
+          status: 'sent',
+          messageSid: message.sid
+        });
+
+        console.log(`✅ Emergency SMS sent to ${contact.name} (${phoneNumber}): ${message.sid}`);
+
+      } catch (smsError) {
+        console.error(`❌ Failed to send SMS to ${contact.name} (${contact.phone}):`, smsError.message);
+        errors.push({
+          contact: contact.name,
+          phone: contact.phone,
+          error: smsError.message
+        });
+      }
+    }
+
+    // Log emergency action
+    const emergencyLog = new SyncActivity({
+      userId: req.user.id,
+      action: 'emergency_location_shared',
+      status: results.length > 0 ? 'success' : 'failed',
+      metadata: {
+        location: { latitude, longitude },
+        contactsNotified: results.length,
+        totalContacts: user.emergencyContacts.length,
+        results,
+        errors
+      }
+    });
+    await emergencyLog.save();
+
+    res.json({
+      message: 'Emergency location sharing completed',
+      location: { latitude, longitude },
+      googleMapsLink,
+      results,
+      errors,
+      summary: {
+        totalContacts: user.emergencyContacts.length,
+        successful: results.length,
+        failed: errors.length
+      }
+    });
+
+  } catch (error) {
+    console.error('Emergency SMS error:', error);
+    res.status(500).json({ 
+      message: 'Failed to send emergency SMS',
+      error: error.message 
+    });
   }
 });
 
