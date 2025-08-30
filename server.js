@@ -3,25 +3,28 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const twilio = require('twilio');
+const { Vonage } = require('@vonage/server-sdk');
 require('dotenv').config();
 
-// Twilio Configuration
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
-const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
-const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || '+15005550006';
+// Vonage Configuration
+const VONAGE_API_KEY = process.env.VONAGE_API_KEY || 'e1afa2fb';
+const VONAGE_API_SECRET = process.env.VONAGE_API_SECRET || 'hBd627eA6Ne7o4Jp';
+const VONAGE_FROM_NUMBER = process.env.VONAGE_FROM_NUMBER || 'SmartSafety';
 
-// Initialize Twilio client only if credentials are available
-let twilioClient = null;
-if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_ACCOUNT_SID.startsWith('AC')) {
+// Initialize Vonage client only if credentials are available
+let vonageClient = null;
+if (VONAGE_API_KEY && VONAGE_API_SECRET) {
   try {
-    twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-    console.log('✅ Twilio client initialized successfully');
+    vonageClient = new Vonage({
+      apiKey: VONAGE_API_KEY,
+      apiSecret: VONAGE_API_SECRET
+    });
+    console.log('✅ Vonage client initialized successfully');
   } catch (error) {
-    console.error('❌ Failed to initialize Twilio client:', error.message);
+    console.error('❌ Failed to initialize Vonage client:', error.message);
   }
 } else {
-  console.warn('⚠️ Twilio credentials not configured. SMS functionality will be disabled.');
+  console.warn('⚠️ Vonage credentials not configured. SMS functionality will be disabled.');
 }
 
 // Environment validation
@@ -1335,12 +1338,12 @@ app.post('/api/emergency/share-location', auth, async (req, res) => {
   try {
     console.log('🚨 Emergency location share request received for user:', req.user.id);
     
-    // Check if Twilio is configured
-    if (!twilioClient) {
-      console.log('❌ Twilio not configured');
+    // Check if Vonage is configured
+    if (!vonageClient) {
+      console.log('❌ Vonage not configured');
       return res.status(503).json({ 
         message: 'SMS service is not configured. Please contact administrator.',
-        error: 'Twilio credentials not available'
+        error: 'Vonage credentials not available'
       });
     }
 
@@ -1386,20 +1389,20 @@ app.post('/api/emergency/share-location', auth, async (req, res) => {
           }
         }
 
-        const message = await twilioClient.messages.create({
-          body: emergencyMessage,
-          from: TWILIO_PHONE_NUMBER,
-          to: phoneNumber
+        const response = await vonageClient.sms.send({
+          to: phoneNumber,
+          from: VONAGE_FROM_NUMBER,
+          text: emergencyMessage
         });
 
         results.push({
           contact: contact.name,
           phone: phoneNumber,
           status: 'sent',
-          messageSid: message.sid
+          messageId: response.messages[0]['message-id']
         });
 
-        console.log(`✅ Emergency SMS sent to ${contact.name} (${phoneNumber}): ${message.sid}`);
+        console.log(`✅ Emergency SMS sent to ${contact.name} (${phoneNumber}): ${response.messages[0]['message-id']}`);
 
       } catch (smsError) {
         console.error(`❌ Failed to send SMS to ${contact.name} (${contact.phone}):`, smsError.message);
@@ -1449,7 +1452,7 @@ app.post('/api/emergency/share-location', auth, async (req, res) => {
   }
 });
 
-// Test emergency endpoint - Simulates SMS sending without Twilio
+// Test emergency endpoint - Simulates SMS sending without Vonage
 app.post('/api/emergency/share-location-test', auth, async (req, res) => {
   try {
     console.log('🧪 Test emergency location share request received for user:', req.user.id);
