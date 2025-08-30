@@ -1368,10 +1368,9 @@ app.post('/api/emergency/share-location', auth, async (req, res) => {
     console.log('✅ Location data found:', latestSensorData.location);
 
     const { latitude, longitude } = latestSensorData.location;
-    const googleMapsLink = `https://maps.google.com/maps?q=${latitude},${longitude}`;
     
-    // Create emergency message
-    const emergencyMessage = `🚨 EMERGENCY ALERT 🚨\n\n${user.name} has triggered an emergency alert!\n\nLocation: ${googleMapsLink}\n\nCoordinates: ${latitude}, ${longitude}\n\nTime: ${new Date().toLocaleString()}\n\nPlease check on them immediately!`;
+    // Create emergency message with coordinates only
+    const emergencyMessage = `🚨 EMERGENCY ALERT 🚨\n\n${user.name} has triggered an emergency alert!\n\nLocation Coordinates:\nLatitude: ${latitude}\nLongitude: ${longitude}\n\nTime: ${new Date().toLocaleString()}\n\nPlease check on them immediately!`;
 
     const results = [];
     const errors = [];
@@ -1432,7 +1431,6 @@ app.post('/api/emergency/share-location', auth, async (req, res) => {
     res.json({
       message: 'Emergency location sharing completed',
       location: { latitude, longitude },
-      googleMapsLink,
       results,
       errors,
       summary: {
@@ -1478,10 +1476,9 @@ app.post('/api/emergency/share-location-test', auth, async (req, res) => {
     console.log('✅ Location data found:', latestSensorData.location);
 
     const { latitude, longitude } = latestSensorData.location;
-    const googleMapsLink = `https://maps.google.com/maps?q=${latitude},${longitude}`;
     
-    // Create emergency message
-    const emergencyMessage = `🚨 EMERGENCY ALERT 🚨\n\n${user.name} has triggered an emergency alert!\n\nLocation: ${googleMapsLink}\n\nCoordinates: ${latitude}, ${longitude}\n\nTime: ${new Date().toLocaleString()}\n\nPlease check on them immediately!`;
+    // Create emergency message with coordinates only
+    const emergencyMessage = `🚨 EMERGENCY ALERT 🚨\n\n${user.name} has triggered an emergency alert!\n\nLocation Coordinates:\nLatitude: ${latitude}\nLongitude: ${longitude}\n\nTime: ${new Date().toLocaleString()}\n\nPlease check on them immediately!`;
 
     const results = [];
     const errors = [];
@@ -1540,7 +1537,6 @@ app.post('/api/emergency/share-location-test', auth, async (req, res) => {
     res.json({
       message: 'Emergency location sharing completed (TEST MODE - No actual SMS sent)',
       location: { latitude, longitude },
-      googleMapsLink,
       results,
       errors,
       summary: {
