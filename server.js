@@ -573,8 +573,9 @@ app.post('/receive', async (req, res) => {
     console.log('   Battery Level:', batteryLevel || 'Not provided');
     console.log('   Timestamp:', timestamp ? new Date(parseInt(timestamp)).toISOString() : 'Using current time');
 
+    let savedSensorData;
     try {
-      const savedSensorData = await sensorData.save();
+      savedSensorData = await sensorData.save();
       console.log('✅ SENSOR DATA SAVED SUCCESSFULLY!');
       console.log('   Record ID:', savedSensorData._id);
       console.log('   Created At:', savedSensorData.createdAt);
