@@ -4,6 +4,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Vonage } = require('@vonage/server-sdk');
+const whatsappService = require('./services/whatsappService');
 require('dotenv').config();
 
 // Vonage Configuration
@@ -233,6 +234,16 @@ const auth = async (req, res, next) => {
 };
 
 // Routes
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    service: 'Smart Safety Band API',
+    whatsapp: whatsappService.getConnectionStatus()
+  });
+});
 
 // Register User
 app.post('/api/users/register', async (req, res) => {
@@ -972,6 +983,281 @@ app.get('/api/sensor/analytics', auth, async (req, res) => {
   }
 });
 
+// WhatsApp Routes
+
+// Get WhatsApp connection status
+app.get('/api/whatsapp/status', auth, async (req, res) => {
+  try {
+    const status = whatsappService.getConnectionStatus();
+    res.json(status);
+  } catch (error) {
+    console.error('Error getting WhatsApp status:', error);
+    res.status(500).json({ message: 'Failed to get WhatsApp status' });
+  }
+});
+
+// Initialize WhatsApp connection
+app.post('/api/whatsapp/connect', auth, async (req, res) => {
+  try {
+    const result = await whatsappService.initialize();
+    if (result) {
+      res.json({ message: 'WhatsApp initialization started', success: true });
+    } else {
+      res.status(500).json({ message: 'Failed to initialize WhatsApp', success: false });
+    }
+  } catch (error) {
+    console.error('Error initializing WhatsApp:', error);
+    res.status(500).json({ message: 'Failed to initialize WhatsApp' });
+  }
+});
+
+// Disconnect WhatsApp
+app.post('/api/whatsapp/disconnect', auth, async (req, res) => {
+  try {
+    await whatsappService.disconnect();
+    res.json({ message: 'WhatsApp disconnected successfully', success: true });
+  } catch (error) {
+    console.error('Error disconnecting WhatsApp:', error);
+    res.status(500).json({ message: 'Failed to disconnect WhatsApp' });
+  }
+});
+
+// Voice-activated SOS endpoint
+app.post('/api/emergency/voice-sos', auth, async (req, res) => {
+  try {
+    const { trigger, audioLevel, timestamp } = req.body;
+
+    // Get user with emergency contacts
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (!user.emergencyContacts || user.emergencyContacts.length === 0) {
+      return res.status(400).json({ message: 'No emergency contacts configured' });
+    }
+
+    // Check WhatsApp connection
+    const whatsappStatus = whatsappService.getConnectionStatus();
+    if (!whatsappStatus.isConnected) {
+      return res.status(503).json({
+        message: 'WhatsApp is not connected. Please connect WhatsApp first.',
+        whatsappStatus
+      });
+    }
+
+    // Get current location from latest sensor data
+    const latestSensorData = await SensorData.findOne({ userId: req.user.id })
+      .sort({ createdAt: -1 })
+      .limit(1);
+
+    let locationText = '';
+    let latitude = null;
+    let longitude = null;
+
+    if (latestSensorData && latestSensorData.location) {
+      latitude = latestSensorData.location.latitude;
+      longitude = latestSensorData.location.longitude;
+      locationText = `\n📍 Location: https://maps.google.com/maps?q=${latitude},${longitude}`;
+    }
+
+    // Create SOS message
+    const sosMessage = `🚨 EMERGENCY ALERT 🚨
+
+${user.name} needs immediate help!
+
+⚠️ Voice-activated SOS triggered
+🔊 Audio level: ${audioLevel}/255
+⏰ Time: ${new Date(timestamp).toLocaleString()}
+📱 Trigger: ${trigger === 'voice_scream' ? 'Loud scream detected' : 'Manual trigger'}${locationText}
+
+This is an automated emergency message from Smart Safety Band.
+
+Please contact ${user.name} immediately or call emergency services if needed.`;
+
+    // Send WhatsApp messages to all emergency contacts
+    const results = [];
+    const errors = [];
+
+    for (const contact of user.emergencyContacts) {
+      try {
+        console.log(`📤 Sending SOS WhatsApp to ${contact.name} (${contact.phone})`);
+
+        // Send text message
+        const textResult = await whatsappService.sendMessage(contact.phone, sosMessage);
+
+        // Send location if available
+        if (latitude && longitude) {
+          await whatsappService.sendLocationMessage(
+            contact.phone,
+            latitude,
+            longitude,
+            `🚨 ${user.name}'s emergency location`
+          );
+        }
+
+        results.push({
+          contact: `${contact.name} (${contact.phone})`,
+          status: 'sent',
+          messageId: textResult.messageId,
+          timestamp: textResult.timestamp
+        });
+
+        console.log(`✅ SOS sent to ${contact.name}`);
+      } catch (error) {
+        console.error(`❌ Failed to send SOS to ${contact.name}:`, error);
+        errors.push({
+          contact: `${contact.name} (${contact.phone})`,
+          error: error.message
+        });
+      }
+    }
+
+    // Create activity log
+    const activity = new Activity({
+      userId: req.user.id,
+      type: 'emergency',
+      message: `Voice-activated SOS sent via WhatsApp to ${results.length} contacts`,
+      status: results.length > 0 ? 'success' : 'error',
+      metadata: {
+        trigger,
+        audioLevel,
+        contactsNotified: results.length,
+        totalContacts: user.emergencyContacts.length,
+        location: latitude && longitude ? { latitude, longitude } : null,
+        timestamp
+      }
+    });
+    await activity.save();
+
+    const response = {
+      success: results.length > 0,
+      message: results.length > 0
+        ? `SOS sent successfully to ${results.length}/${user.emergencyContacts.length} contacts`
+        : 'Failed to send SOS to any contacts',
+      results,
+      errors,
+      summary: {
+        totalContacts: user.emergencyContacts.length,
+        successful: results.length,
+        failed: errors.length
+      },
+      whatsappUsed: true
+    };
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('Voice SOS error:', error);
+    res.status(500).json({
+      message: 'Failed to send voice-activated SOS',
+      error: error.message
+    });
+  }
+});
+
+// Enhanced location sharing with WhatsApp
+app.post('/api/emergency/share-location-whatsapp', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (!user.emergencyContacts || user.emergencyContacts.length === 0) {
+      return res.status(400).json({ message: 'No emergency contacts configured' });
+    }
+
+    // Check WhatsApp connection
+    const whatsappStatus = whatsappService.getConnectionStatus();
+    if (!whatsappStatus.isConnected) {
+      return res.status(503).json({
+        message: 'WhatsApp is not connected. Please connect WhatsApp first.',
+        whatsappStatus
+      });
+    }
+
+    // Get latest location from sensor data
+    const latestSensorData = await SensorData.findOne({ userId: req.user.id })
+      .sort({ createdAt: -1 })
+      .limit(1);
+
+    if (!latestSensorData || !latestSensorData.location) {
+      return res.status(404).json({ message: 'No location data available' });
+    }
+
+    const { latitude, longitude } = latestSensorData.location;
+
+    const locationMessage = `📍 Location Shared by ${user.name}
+
+🕐 Time: ${new Date().toLocaleString()}
+📱 Shared from Smart Safety Band
+
+Google Maps: https://maps.google.com/maps?q=${latitude},${longitude}
+
+This location was shared intentionally by ${user.name}.`;
+
+    // Send to all emergency contacts
+    const results = [];
+    const errors = [];
+
+    for (const contact of user.emergencyContacts) {
+      try {
+        // Send location
+        await whatsappService.sendLocationMessage(contact.phone, latitude, longitude, locationMessage);
+
+        results.push({
+          contact: `${contact.name} (${contact.phone})`,
+          status: 'sent'
+        });
+
+        console.log(`✅ Location shared with ${contact.name} via WhatsApp`);
+      } catch (error) {
+        console.error(`❌ Failed to share location with ${contact.name}:`, error);
+        errors.push({
+          contact: `${contact.name} (${contact.phone})`,
+          error: error.message
+        });
+      }
+    }
+
+    // Create activity log
+    const activity = new Activity({
+      userId: req.user.id,
+      type: 'location',
+      message: `Location shared via WhatsApp to ${results.length} contacts`,
+      status: results.length > 0 ? 'success' : 'error',
+      metadata: {
+        location: { latitude, longitude },
+        contactsNotified: results.length,
+        totalContacts: user.emergencyContacts.length,
+        method: 'whatsapp'
+      }
+    });
+    await activity.save();
+
+    res.json({
+      success: results.length > 0,
+      message: `Location shared via WhatsApp to ${results.length}/${user.emergencyContacts.length} contacts`,
+      results,
+      errors,
+      summary: {
+        totalContacts: user.emergencyContacts.length,
+        successful: results.length,
+        failed: errors.length
+      },
+      location: { latitude, longitude }
+    });
+
+  } catch (error) {
+    console.error('WhatsApp location sharing error:', error);
+    res.status(500).json({
+      message: 'Failed to share location via WhatsApp',
+      error: error.message
+    });
+  }
+});
+
 // Seed sample sensor data
 const seedSensorData = async () => {
   try {
@@ -1337,11 +1623,11 @@ app.post('/api/sensor/test', async (req, res) => {
 app.post('/api/emergency/share-location', auth, async (req, res) => {
   try {
     console.log('🚨 Emergency location share request received for user:', req.user.id);
-    
+
     // Check if Vonage is configured
     if (!vonageClient) {
       console.log('❌ Vonage not configured');
-      return res.status(503).json({ 
+      return res.status(503).json({
         message: 'SMS service is not configured. Please contact administrator.',
         error: 'Vonage credentials not available'
       });
@@ -1368,7 +1654,7 @@ app.post('/api/emergency/share-location', auth, async (req, res) => {
     console.log('✅ Location data found:', latestSensorData.location);
 
     const { latitude, longitude } = latestSensorData.location;
-    
+
     // Create emergency message with coordinates only
     const emergencyMessage = `🚨 EMERGENCY ALERT 🚨\n\n${user.name} has triggered an emergency alert!\n\nLocation Coordinates:\nLatitude: ${latitude}\nLongitude: ${longitude}\n\nTime: ${new Date().toLocaleString()}\n\nPlease check on them immediately!`;
 
@@ -1414,9 +1700,10 @@ app.post('/api/emergency/share-location', auth, async (req, res) => {
     }
 
     // Log emergency action
-    const emergencyLog = new SyncActivity({
+    const emergencyLog = new Activity({
       userId: req.user.id,
-      action: 'emergency_location_shared',
+      type: 'emergency',
+      message: 'Emergency location shared with contacts',
       status: results.length > 0 ? 'success' : 'failed',
       metadata: {
         location: { latitude, longitude },
@@ -1443,9 +1730,9 @@ app.post('/api/emergency/share-location', auth, async (req, res) => {
   } catch (error) {
     console.error('🚨 Emergency SMS error:', error);
     console.error('Error stack:', error.stack);
-    res.status(500).json({ 
+    res.status(500).json({
       message: 'Failed to send emergency SMS',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -1454,7 +1741,7 @@ app.post('/api/emergency/share-location', auth, async (req, res) => {
 app.post('/api/emergency/share-location-test', auth, async (req, res) => {
   try {
     console.log('🧪 Test emergency location share request received for user:', req.user.id);
-    
+
     // Get user with emergency contacts
     const user = await User.findById(req.user.id);
     if (!user) {
@@ -1476,7 +1763,7 @@ app.post('/api/emergency/share-location-test', auth, async (req, res) => {
     console.log('✅ Location data found:', latestSensorData.location);
 
     const { latitude, longitude } = latestSensorData.location;
-    
+
     // Create emergency message with coordinates only
     const emergencyMessage = `🚨 EMERGENCY ALERT 🚨\n\n${user.name} has triggered an emergency alert!\n\nLocation Coordinates:\nLatitude: ${latitude}\nLongitude: ${longitude}\n\nTime: ${new Date().toLocaleString()}\n\nPlease check on them immediately!`;
 
@@ -1519,9 +1806,10 @@ app.post('/api/emergency/share-location-test', auth, async (req, res) => {
     }
 
     // Log emergency action
-    const emergencyLog = new SyncActivity({
+    const emergencyLog = new Activity({
       userId: req.user.id,
-      action: 'emergency_location_shared_test',
+      type: 'emergency',
+      message: 'Emergency location shared with contacts (TEST MODE)',
       status: results.length > 0 ? 'success' : 'failed',
       metadata: {
         location: { latitude, longitude },
@@ -1550,9 +1838,9 @@ app.post('/api/emergency/share-location-test', auth, async (req, res) => {
   } catch (error) {
     console.error('🧪 Test emergency SMS error:', error);
     console.error('Error stack:', error.stack);
-    res.status(500).json({ 
+    res.status(500).json({
       message: 'Failed to send test emergency SMS',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -1684,6 +1972,13 @@ const startServer = async () => {
     // Connect to MongoDB
     await connectDB();
 
+    // Initialize WhatsApp service
+    console.log('📱 Initializing WhatsApp service...');
+    whatsappService.initialize().catch(error => {
+      console.error('⚠️ WhatsApp service failed to initialize:', error.message);
+      console.log('📱 WhatsApp features will be unavailable until manually connected');
+    });
+
     // Seed sample data on startup
     console.log('🌱 Seeding sample sensor data...');
     try {
@@ -1694,7 +1989,7 @@ const startServer = async () => {
     }
 
     // Start the server
-    const PORT = process.env.PORT || 5000;
+    const PORT = process.env.PORT || 5001;
     const HOST = process.env.HOST || '0.0.0.0';
 
     const server = app.listen(PORT, HOST, () => {
