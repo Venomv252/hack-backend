@@ -7,10 +7,22 @@ const twilio = require('twilio');
 require('dotenv').config();
 
 // Twilio Configuration
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || 'your_twilio_account_sid';
-const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || 'your_twilio_auth_token';
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || '+15005550006';
-const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+
+// Initialize Twilio client only if credentials are available
+let twilioClient = null;
+if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_ACCOUNT_SID.startsWith('AC')) {
+  try {
+    twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+    console.log('✅ Twilio client initialized successfully');
+  } catch (error) {
+    console.error('❌ Failed to initialize Twilio client:', error.message);
+  }
+} else {
+  console.warn('⚠️ Twilio credentials not configured. SMS functionality will be disabled.');
+}
 
 // Environment validation
 const requiredEnvVars = ['MONGODB_URI'];
@@ -1321,6 +1333,14 @@ app.post('/api/sensor/test', async (req, res) => {
 // Emergency SMS endpoint - Share location with emergency contacts
 app.post('/api/emergency/share-location', auth, async (req, res) => {
   try {
+    // Check if Twilio is configured
+    if (!twilioClient) {
+      return res.status(503).json({ 
+        message: 'SMS service is not configured. Please contact administrator.',
+        error: 'Twilio credentials not available'
+      });
+    }
+
     // Get user with emergency contacts
     const user = await User.findById(req.user.id);
     if (!user) {
