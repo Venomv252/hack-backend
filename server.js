@@ -477,6 +477,8 @@ app.get('/api/activities/stats', auth, async (req, res) => {
 // Receive data from ESP32 (your specific endpoint)
 app.post('/receive', async (req, res) => {
   try {
+    console.log('📡 Raw ESP32 request body:', JSON.stringify(req.body, null, 2));
+    
     const { accelerometer, gyroscope, latitude, longitude, timestamp } = req.body;
     
     // Extract values from nested objects
@@ -487,7 +489,7 @@ app.post('/receive', async (req, res) => {
     const gyroY = gyroscope?.y || 0;
     const gyroZ = gyroscope?.z || 0;
 
-    console.log('📡 Received ESP32 data:', {
+    console.log('📡 Processed ESP32 data:', {
       accelerometer: { x: accX, y: accY, z: accZ },
       gyroscope: { x: gyroX, y: gyroY, z: gyroZ },
       location: { latitude, longitude },
@@ -541,7 +543,23 @@ app.post('/receive', async (req, res) => {
       timestamp: timestamp ? new Date(parseInt(timestamp)) : new Date()
     });
 
-    await sensorData.save();
+    console.log('💾 Attempting to save sensor data:', {
+      userId: user._id,
+      deviceId: 'ESP32_001',
+      accelerometer: { x: accX, y: accY, z: accZ },
+      gyroscope: { x: gyroX, y: gyroY, z: gyroZ },
+      location: latitude && longitude ? { latitude, longitude } : null
+    });
+
+    try {
+      const savedSensorData = await sensorData.save();
+      console.log('✅ Sensor data saved successfully with ID:', savedSensorData._id);
+      console.log('📊 Database connection state:', mongoose.connection.readyState);
+    } catch (saveError) {
+      console.error('❌ Error saving sensor data:', saveError);
+      console.error('📊 Database connection state:', mongoose.connection.readyState);
+      throw saveError;
+    }
 
     // Check for fall detection based on accelerometer data
     const totalAcceleration = Math.sqrt(accX*accX + accY*accY + accZ*accZ);
@@ -887,6 +905,26 @@ app.get('/api/sensor/analytics', auth, async (req, res) => {
   } catch (error) {
     console.error(error.message);
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Debug endpoint to check sensor data in database (remove in production)
+app.get('/api/sensor/debug', async (req, res) => {
+  try {
+    const count = await SensorData.countDocuments();
+    const latest = await SensorData.findOne().sort({ createdAt: -1 });
+    const all = await SensorData.find().sort({ createdAt: -1 }).limit(10);
+    
+    res.json({
+      totalCount: count,
+      latestRecord: latest,
+      recent10Records: all,
+      databaseState: mongoose.connection.readyState,
+      databaseName: mongoose.connection.name
+    });
+  } catch (error) {
+    console.error('Debug endpoint error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
