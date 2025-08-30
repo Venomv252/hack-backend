@@ -477,9 +477,13 @@ app.get('/api/activities/stats', auth, async (req, res) => {
 // Receive data from ESP32 (your specific endpoint)
 app.post('/receive', async (req, res) => {
   try {
+    console.log('\n=== ESP32 DATA RECEIVED ===');
+    console.log('🕐 Timestamp:', new Date().toISOString());
     console.log('📡 Raw ESP32 request body:', JSON.stringify(req.body, null, 2));
+    console.log('📋 Request headers:', JSON.stringify(req.headers, null, 2));
+    console.log('🌐 Request IP:', req.ip || req.connection.remoteAddress);
     
-    const { accelerometer, gyroscope, latitude, longitude, timestamp } = req.body;
+    const { accelerometer, gyroscope, latitude, longitude, timestamp, heartRate, temperature, batteryLevel } = req.body;
     
     // Extract values from nested objects
     const accX = accelerometer?.x || 0;
@@ -489,11 +493,23 @@ app.post('/receive', async (req, res) => {
     const gyroY = gyroscope?.y || 0;
     const gyroZ = gyroscope?.z || 0;
 
-    console.log('📡 Processed ESP32 data:', {
+    console.log('🔄 Processed ESP32 data:', {
       accelerometer: { x: accX, y: accY, z: accZ },
       gyroscope: { x: gyroX, y: gyroY, z: gyroZ },
       location: { latitude, longitude },
+      heartRate,
+      temperature,
+      batteryLevel,
       timestamp: timestamp || new Date().toISOString()
+    });
+
+    // Calculate derived values
+    const totalAcceleration = Math.sqrt(accX*accX + accY*accY + accZ*accZ);
+    const totalRotation = Math.sqrt(gyroX*gyroX + gyroY*gyroY + gyroZ*gyroZ);
+    
+    console.log('📊 Calculated values:', {
+      totalAcceleration: totalAcceleration.toFixed(2) + 'g',
+      totalRotation: totalRotation.toFixed(2) + '°/s'
     });
 
     // For now, we'll use demo user since ESP32 doesn't send user info
@@ -540,24 +556,36 @@ app.post('/receive', async (req, res) => {
         longitude: parseFloat(longitude),
         accuracy: 10 // Estimated GPS accuracy
       } : undefined,
+      heartRate: heartRate ? parseInt(heartRate) : undefined,
+      temperature: temperature ? parseFloat(temperature) : undefined,
+      batteryLevel: batteryLevel ? parseInt(batteryLevel) : undefined,
       timestamp: timestamp ? new Date(parseInt(timestamp)) : new Date()
     });
 
-    console.log('💾 Attempting to save sensor data:', {
-      userId: user._id,
-      deviceId: 'ESP32_001',
-      accelerometer: { x: accX, y: accY, z: accZ },
-      gyroscope: { x: gyroX, y: gyroY, z: gyroZ },
-      location: latitude && longitude ? { latitude, longitude } : null
-    });
+    console.log('💾 Attempting to save sensor data:');
+    console.log('   User ID:', user._id);
+    console.log('   Device ID: ESP32_001');
+    console.log('   Accelerometer:', { x: accX, y: accY, z: accZ });
+    console.log('   Gyroscope:', { x: gyroX, y: gyroY, z: gyroZ });
+    console.log('   Location:', latitude && longitude ? { latitude, longitude } : 'No GPS data');
+    console.log('   Heart Rate:', heartRate || 'Not provided');
+    console.log('   Temperature:', temperature || 'Not provided');
+    console.log('   Battery Level:', batteryLevel || 'Not provided');
+    console.log('   Timestamp:', timestamp ? new Date(parseInt(timestamp)).toISOString() : 'Using current time');
 
     try {
       const savedSensorData = await sensorData.save();
-      console.log('✅ Sensor data saved successfully with ID:', savedSensorData._id);
-      console.log('📊 Database connection state:', mongoose.connection.readyState);
+      console.log('✅ SENSOR DATA SAVED SUCCESSFULLY!');
+      console.log('   Record ID:', savedSensorData._id);
+      console.log('   Created At:', savedSensorData.createdAt);
+      console.log('   Database State:', mongoose.connection.readyState, '(1=connected)');
+      console.log('   Database Name:', mongoose.connection.name);
     } catch (saveError) {
-      console.error('❌ Error saving sensor data:', saveError);
-      console.error('📊 Database connection state:', mongoose.connection.readyState);
+      console.error('❌ ERROR SAVING SENSOR DATA:');
+      console.error('   Error Message:', saveError.message);
+      console.error('   Error Stack:', saveError.stack);
+      console.error('   Database State:', mongoose.connection.readyState);
+      console.error('   Database Name:', mongoose.connection.name);
       throw saveError;
     }
 
@@ -622,26 +650,41 @@ app.post('/receive', async (req, res) => {
         accelerometer: { x: accX, y: accY, z: accZ },
         gyroscope: { x: gyroX, y: gyroY, z: gyroZ },
         location: latitude && longitude ? { latitude, longitude } : null,
+        heartRate,
+        temperature,
+        batteryLevel,
         timestamp: timestamp ? new Date(parseInt(timestamp)) : new Date()
       }
     });
-    await syncActivity.save();
+    
+    try {
+      await syncActivity.save();
+      console.log('📝 Activity record created successfully');
+    } catch (activityError) {
+      console.error('❌ Error creating activity record:', activityError.message);
+    }
 
     const response = {
       status: 'success',
-      message: 'ESP32 data received successfully',
-      dataId: sensorData._id,
+      message: 'ESP32 data received and saved successfully',
+      dataId: savedSensorData._id,
       analysis: {
-        totalAcceleration: totalAcceleration.toFixed(2),
-        totalRotation: totalRotation.toFixed(2),
+        totalAcceleration: totalAcceleration.toFixed(2) + 'g',
+        totalRotation: totalRotation.toFixed(2) + '°/s',
         fallDetected,
         emergencyTriggered,
-        location: latitude && longitude ? { latitude, longitude } : null
+        location: latitude && longitude ? { latitude, longitude } : null,
+        heartRate: heartRate || null,
+        temperature: temperature || null,
+        batteryLevel: batteryLevel || null
       },
       timestamp: new Date().toISOString()
     };
 
-    console.log('✅ ESP32 data processed successfully');
+    console.log('🎉 ESP32 DATA PROCESSING COMPLETE!');
+    console.log('📤 Sending response:', JSON.stringify(response, null, 2));
+    console.log('=== END ESP32 DATA PROCESSING ===\n');
+    
     res.status(200).json(response);
 
   } catch (error) {
@@ -905,6 +948,127 @@ app.get('/api/sensor/analytics', auth, async (req, res) => {
   } catch (error) {
     console.error(error.message);
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Seed sample sensor data
+const seedSensorData = async () => {
+  try {
+    // Find or create demo user
+    let user = await User.findOne({ email: 'rahul.sharma@smartsafetyband.com' });
+    
+    if (!user) {
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash('demo123', salt);
+
+      user = new User({
+        name: 'Rahul Sharma',
+        email: 'rahul.sharma@smartsafetyband.com',
+        phone: '+91 98765 43210',
+        password: hashedPassword,
+        emergencyContacts: [
+          { id: '1', name: 'Sunita Sharma', phone: '+91 98765 43211', relationship: 'Mother' },
+          { id: '2', name: 'Amit Kumar', phone: '+91 87654 32109', relationship: 'Friend' },
+          { id: '3', name: 'Emergency Services', phone: '112', relationship: 'Emergency' }
+        ]
+      });
+
+      await user.save();
+      console.log('✅ Created demo user for seeding');
+    }
+
+    // Clear existing sensor data
+    await SensorData.deleteMany({});
+    console.log('🧹 Cleared existing sensor data');
+
+    // Create 2 sample sensor records
+    const sampleData = [
+      {
+        userId: user._id,
+        deviceId: 'ESP32_001',
+        accelerometer: { x: 1.2, y: -0.8, z: 9.6 },
+        gyroscope: { x: 15.3, y: -8.7, z: 12.1 },
+        location: { latitude: 28.6139, longitude: 77.2090, accuracy: 8 },
+        heartRate: 72,
+        temperature: 36.8,
+        batteryLevel: 85,
+        emergencyTriggered: false,
+        fallDetected: false,
+        timestamp: new Date(Date.now() - 5 * 60 * 1000), // 5 minutes ago
+        createdAt: new Date(Date.now() - 5 * 60 * 1000)
+      },
+      {
+        userId: user._id,
+        deviceId: 'ESP32_001',
+        accelerometer: { x: 0.9, y: -1.1, z: 9.8 },
+        gyroscope: { x: 8.2, y: -12.5, z: 6.8 },
+        location: { latitude: 28.6141, longitude: 77.2088, accuracy: 12 },
+        heartRate: 75,
+        temperature: 36.9,
+        batteryLevel: 84,
+        emergencyTriggered: false,
+        fallDetected: false,
+        timestamp: new Date(Date.now() - 2 * 60 * 1000), // 2 minutes ago
+        createdAt: new Date(Date.now() - 2 * 60 * 1000)
+      }
+    ];
+
+    const savedData = await SensorData.insertMany(sampleData);
+    console.log('🌱 Seeded 2 sample sensor records:', savedData.map(d => d._id));
+
+    // Create corresponding activities
+    const activities = [
+      {
+        userId: user._id,
+        type: 'sync',
+        message: 'ESP32 sensor data received (Sample 1)',
+        status: 'success',
+        metadata: { 
+          deviceId: 'ESP32_001',
+          accelerometer: sampleData[0].accelerometer,
+          gyroscope: sampleData[0].gyroscope,
+          location: sampleData[0].location,
+          timestamp: sampleData[0].timestamp
+        },
+        createdAt: sampleData[0].createdAt
+      },
+      {
+        userId: user._id,
+        type: 'sync',
+        message: 'ESP32 sensor data received (Sample 2)',
+        status: 'success',
+        metadata: { 
+          deviceId: 'ESP32_001',
+          accelerometer: sampleData[1].accelerometer,
+          gyroscope: sampleData[1].gyroscope,
+          location: sampleData[1].location,
+          timestamp: sampleData[1].timestamp
+        },
+        createdAt: sampleData[1].createdAt
+      }
+    ];
+
+    await Activity.insertMany(activities);
+    console.log('📝 Created corresponding activity records');
+
+    return { success: true, count: savedData.length, records: savedData };
+  } catch (error) {
+    console.error('❌ Error seeding sensor data:', error);
+    throw error;
+  }
+};
+
+// Seed endpoint
+app.post('/api/sensor/seed', async (req, res) => {
+  try {
+    const result = await seedSensorData();
+    res.json({
+      message: 'Successfully seeded sensor data',
+      ...result
+    });
+  } catch (error) {
+    console.error('Seed endpoint error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -1274,6 +1438,15 @@ const startServer = async () => {
     
     // Connect to MongoDB
     await connectDB();
+    
+    // Seed sample data on startup
+    console.log('🌱 Seeding sample sensor data...');
+    try {
+      await seedSensorData();
+      console.log('✅ Sample data seeded successfully');
+    } catch (seedError) {
+      console.error('⚠️ Warning: Could not seed sample data:', seedError.message);
+    }
     
     // Start the server
     const PORT = process.env.PORT || 5000;
