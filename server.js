@@ -477,12 +477,21 @@ app.get('/api/activities/stats', auth, async (req, res) => {
 // Receive data from ESP32 (your specific endpoint)
 app.post('/receive', async (req, res) => {
   try {
-    const { accX, accY, accZ, gyroX, gyroY, gyroZ } = req.body;
+    const { accelerometer, gyroscope, latitude, longitude, timestamp } = req.body;
+    
+    // Extract values from nested objects
+    const accX = accelerometer?.x || 0;
+    const accY = accelerometer?.y || 0;
+    const accZ = accelerometer?.z || 0;
+    const gyroX = gyroscope?.x || 0;
+    const gyroY = gyroscope?.y || 0;
+    const gyroZ = gyroscope?.z || 0;
 
     console.log('📡 Received ESP32 data:', {
       accelerometer: { x: accX, y: accY, z: accZ },
       gyroscope: { x: gyroX, y: gyroY, z: gyroZ },
-      timestamp: new Date().toISOString()
+      location: { latitude, longitude },
+      timestamp: timestamp || new Date().toISOString()
     });
 
     // For now, we'll use demo user since ESP32 doesn't send user info
@@ -524,7 +533,12 @@ app.post('/receive', async (req, res) => {
         y: gyroY,
         z: gyroZ
       },
-      timestamp: new Date()
+      location: latitude && longitude ? {
+        latitude: parseFloat(latitude),
+        longitude: parseFloat(longitude),
+        accuracy: 10 // Estimated GPS accuracy
+      } : undefined,
+      timestamp: timestamp ? new Date(parseInt(timestamp)) : new Date()
     });
 
     await sensorData.save();
@@ -547,8 +561,9 @@ app.post('/receive', async (req, res) => {
           deviceId: 'ESP32_001',
           accelerometer: { x: accX, y: accY, z: accZ },
           gyroscope: { x: gyroX, y: gyroY, z: gyroZ },
+          location: latitude && longitude ? { latitude, longitude } : null,
           totalAcceleration: totalAcceleration.toFixed(2),
-          timestamp: new Date()
+          timestamp: timestamp ? new Date(parseInt(timestamp)) : new Date()
         }
       });
       await fallActivity.save();
@@ -569,8 +584,9 @@ app.post('/receive', async (req, res) => {
           deviceId: 'ESP32_001',
           accelerometer: { x: accX, y: accY, z: accZ },
           gyroscope: { x: gyroX, y: gyroY, z: gyroZ },
+          location: latitude && longitude ? { latitude, longitude } : null,
           totalRotation: totalRotation.toFixed(2),
-          timestamp: new Date()
+          timestamp: timestamp ? new Date(parseInt(timestamp)) : new Date()
         }
       });
       await emergencyActivity.save();
@@ -587,7 +603,8 @@ app.post('/receive', async (req, res) => {
         deviceId: 'ESP32_001',
         accelerometer: { x: accX, y: accY, z: accZ },
         gyroscope: { x: gyroX, y: gyroY, z: gyroZ },
-        timestamp: new Date()
+        location: latitude && longitude ? { latitude, longitude } : null,
+        timestamp: timestamp ? new Date(parseInt(timestamp)) : new Date()
       }
     });
     await syncActivity.save();
@@ -600,7 +617,8 @@ app.post('/receive', async (req, res) => {
         totalAcceleration: totalAcceleration.toFixed(2),
         totalRotation: totalRotation.toFixed(2),
         fallDetected,
-        emergencyTriggered
+        emergencyTriggered,
+        location: latitude && longitude ? { latitude, longitude } : null
       },
       timestamp: new Date().toISOString()
     };
