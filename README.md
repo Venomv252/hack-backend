@@ -75,10 +75,10 @@ Required environment variables:
 
 ```env
 # Database
-MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/smartsafetyband
+MONGODB_URI=your_mongodb_connection_string
 
 # Authentication
-JWT_SECRET=your-super-secret-jwt-key
+JWT_SECRET=your_jwt_secret_key
 
 # Server
 PORT=5000
