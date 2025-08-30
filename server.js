@@ -131,8 +131,68 @@ const activitySchema = new mongoose.Schema({
   }
 });
 
+// Sensor Data Schema
+const sensorDataSchema = new mongoose.Schema({
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  deviceId: {
+    type: String,
+    required: true
+  },
+  heartRate: {
+    type: Number,
+    min: 0,
+    max: 300
+  },
+  temperature: {
+    type: Number,
+    min: -50,
+    max: 100
+  },
+  accelerometer: {
+    x: Number,
+    y: Number,
+    z: Number
+  },
+  gyroscope: {
+    x: Number,
+    y: Number,
+    z: Number
+  },
+  location: {
+    latitude: Number,
+    longitude: Number,
+    accuracy: Number
+  },
+  batteryLevel: {
+    type: Number,
+    min: 0,
+    max: 100
+  },
+  emergencyTriggered: {
+    type: Boolean,
+    default: false
+  },
+  fallDetected: {
+    type: Boolean,
+    default: false
+  },
+  timestamp: {
+    type: Date,
+    default: Date.now
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
 const User = mongoose.model('User', userSchema);
 const Activity = mongoose.model('Activity', activitySchema);
+const SensorData = mongoose.model('SensorData', sensorDataSchema);
 
 // Auth Middleware
 const auth = async (req, res, next) => {
@@ -412,6 +472,406 @@ app.get('/api/activities/stats', auth, async (req, res) => {
   }
 });
 
+// Sensor Data Routes
+
+// Receive data from ESP32 (your specific endpoint)
+app.post('/receive', async (req, res) => {
+  try {
+    const { accX, accY, accZ, gyroX, gyroY, gyroZ } = req.body;
+
+    console.log('📡 Received ESP32 data:', {
+      accelerometer: { x: accX, y: accY, z: accZ },
+      gyroscope: { x: gyroX, y: gyroY, z: gyroZ },
+      timestamp: new Date().toISOString()
+    });
+
+    // For now, we'll use demo user since ESP32 doesn't send user info
+    // You can modify this to include deviceId in your ESP32 code later
+    let user = await User.findOne({ email: 'rahul.sharma@smartsafetyband.com' });
+    
+    if (!user) {
+      // Create demo user if doesn't exist
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash('demo123', salt);
+
+      user = new User({
+        name: 'Rahul Sharma',
+        email: 'rahul.sharma@smartsafetyband.com',
+        phone: '+91 98765 43210',
+        password: hashedPassword,
+        emergencyContacts: [
+          { id: '1', name: 'Sunita Sharma', phone: '+91 98765 43211', relationship: 'Mother' },
+          { id: '2', name: 'Amit Kumar', phone: '+91 87654 32109', relationship: 'Friend' },
+          { id: '3', name: 'Emergency Services', phone: '112', relationship: 'Emergency' }
+        ]
+      });
+
+      await user.save();
+      console.log('✅ Created demo user for ESP32 data');
+    }
+
+    // Create sensor data entry
+    const sensorData = new SensorData({
+      userId: user._id,
+      deviceId: 'ESP32_001', // You can make this dynamic later
+      accelerometer: {
+        x: accX,
+        y: accY,
+        z: accZ
+      },
+      gyroscope: {
+        x: gyroX,
+        y: gyroY,
+        z: gyroZ
+      },
+      timestamp: new Date()
+    });
+
+    await sensorData.save();
+
+    // Check for fall detection based on accelerometer data
+    const totalAcceleration = Math.sqrt(accX*accX + accY*accY + accZ*accZ);
+    let fallDetected = false;
+    let emergencyTriggered = false;
+
+    // Simple fall detection algorithm
+    if (totalAcceleration > 15 || totalAcceleration < 2) {
+      fallDetected = true;
+      
+      const fallActivity = new Activity({
+        userId: user._id,
+        type: 'emergency',
+        message: `Potential fall detected! Total acceleration: ${totalAcceleration.toFixed(2)}g`,
+        status: 'warning',
+        metadata: { 
+          deviceId: 'ESP32_001',
+          accelerometer: { x: accX, y: accY, z: accZ },
+          gyroscope: { x: gyroX, y: gyroY, z: gyroZ },
+          totalAcceleration: totalAcceleration.toFixed(2),
+          timestamp: new Date()
+        }
+      });
+      await fallActivity.save();
+      console.log('⚠️ Fall detected! Total acceleration:', totalAcceleration.toFixed(2));
+    }
+
+    // Check for rapid rotation (potential emergency)
+    const totalRotation = Math.sqrt(gyroX*gyroX + gyroY*gyroY + gyroZ*gyroZ);
+    if (totalRotation > 200) {
+      emergencyTriggered = true;
+      
+      const emergencyActivity = new Activity({
+        userId: user._id,
+        type: 'emergency',
+        message: `Rapid movement detected! Total rotation: ${totalRotation.toFixed(2)}°/s`,
+        status: 'error',
+        metadata: { 
+          deviceId: 'ESP32_001',
+          accelerometer: { x: accX, y: accY, z: accZ },
+          gyroscope: { x: gyroX, y: gyroY, z: gyroZ },
+          totalRotation: totalRotation.toFixed(2),
+          timestamp: new Date()
+        }
+      });
+      await emergencyActivity.save();
+      console.log('🚨 Emergency detected! Total rotation:', totalRotation.toFixed(2));
+    }
+
+    // Create sync activity
+    const syncActivity = new Activity({
+      userId: user._id,
+      type: 'sync',
+      message: 'ESP32 sensor data received',
+      status: 'success',
+      metadata: { 
+        deviceId: 'ESP32_001',
+        accelerometer: { x: accX, y: accY, z: accZ },
+        gyroscope: { x: gyroX, y: gyroY, z: gyroZ },
+        timestamp: new Date()
+      }
+    });
+    await syncActivity.save();
+
+    const response = {
+      status: 'success',
+      message: 'ESP32 data received successfully',
+      dataId: sensorData._id,
+      analysis: {
+        totalAcceleration: totalAcceleration.toFixed(2),
+        totalRotation: totalRotation.toFixed(2),
+        fallDetected,
+        emergencyTriggered
+      },
+      timestamp: new Date().toISOString()
+    };
+
+    console.log('✅ ESP32 data processed successfully');
+    res.status(200).json(response);
+
+  } catch (error) {
+    console.error('❌ ESP32 data processing error:', error.message);
+    res.status(500).json({ 
+      status: 'error',
+      message: 'Failed to process ESP32 data',
+      error: error.message 
+    });
+  }
+});
+
+// Receive sensor data from device (no auth required for device)
+app.post('/api/sensor/data', async (req, res) => {
+  try {
+    const { 
+      deviceId, 
+      userId, 
+      heartRate, 
+      temperature, 
+      accelerometer, 
+      gyroscope, 
+      location, 
+      batteryLevel,
+      emergencyTriggered,
+      fallDetected,
+      timestamp 
+    } = req.body;
+
+    // Validate required fields
+    if (!deviceId) {
+      return res.status(400).json({ message: 'Device ID is required' });
+    }
+
+    // Find user by deviceId or userId
+    let user;
+    if (userId) {
+      user = await User.findById(userId);
+    } else {
+      // You might want to add a deviceId field to User schema for this
+      user = await User.findOne({ phone: deviceId }); // Temporary mapping
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found for this device' });
+    }
+
+    // Create sensor data entry
+    const sensorData = new SensorData({
+      userId: user._id,
+      deviceId,
+      heartRate,
+      temperature,
+      accelerometer,
+      gyroscope,
+      location,
+      batteryLevel,
+      emergencyTriggered,
+      fallDetected,
+      timestamp: timestamp ? new Date(timestamp) : new Date()
+    });
+
+    await sensorData.save();
+
+    // Check for emergency conditions and create activities
+    const activities = [];
+
+    if (emergencyTriggered) {
+      const emergencyActivity = new Activity({
+        userId: user._id,
+        type: 'emergency',
+        message: 'Emergency button pressed on device',
+        status: 'error',
+        metadata: { deviceId, location, timestamp: sensorData.timestamp }
+      });
+      await emergencyActivity.save();
+      activities.push('emergency_triggered');
+    }
+
+    if (fallDetected) {
+      const fallActivity = new Activity({
+        userId: user._id,
+        type: 'emergency',
+        message: 'Fall detected by device sensors',
+        status: 'warning',
+        metadata: { deviceId, accelerometer, gyroscope, location, timestamp: sensorData.timestamp }
+      });
+      await fallActivity.save();
+      activities.push('fall_detected');
+    }
+
+    // Check for abnormal vital signs
+    if (heartRate && (heartRate > 120 || heartRate < 50)) {
+      const vitalActivity = new Activity({
+        userId: user._id,
+        type: 'system',
+        message: `Abnormal heart rate detected: ${heartRate} BPM`,
+        status: heartRate > 150 ? 'error' : 'warning',
+        metadata: { deviceId, heartRate, timestamp: sensorData.timestamp }
+      });
+      await vitalActivity.save();
+      activities.push('abnormal_vitals');
+    }
+
+    if (temperature && (temperature > 38 || temperature < 35)) {
+      const tempActivity = new Activity({
+        userId: user._id,
+        type: 'system',
+        message: `Abnormal body temperature: ${temperature}°C`,
+        status: 'warning',
+        metadata: { deviceId, temperature, timestamp: sensorData.timestamp }
+      });
+      await tempActivity.save();
+      activities.push('abnormal_temperature');
+    }
+
+    // Low battery warning
+    if (batteryLevel && batteryLevel < 20) {
+      const batteryActivity = new Activity({
+        userId: user._id,
+        type: 'system',
+        message: `Low battery warning: ${batteryLevel}%`,
+        status: batteryLevel < 10 ? 'error' : 'warning',
+        metadata: { deviceId, batteryLevel, timestamp: sensorData.timestamp }
+      });
+      await batteryActivity.save();
+      activities.push('low_battery');
+    }
+
+    res.status(201).json({
+      message: 'Sensor data received successfully',
+      dataId: sensorData._id,
+      activitiesTriggered: activities,
+      timestamp: sensorData.timestamp
+    });
+
+  } catch (error) {
+    console.error('Sensor data error:', error.message);
+    res.status(500).json({ message: 'Failed to process sensor data' });
+  }
+});
+
+// Get latest sensor data for user
+app.get('/api/sensor/latest', auth, async (req, res) => {
+  try {
+    const latestData = await SensorData.findOne({ userId: req.user.id })
+      .sort({ createdAt: -1 })
+      .limit(1);
+
+    if (!latestData) {
+      return res.status(404).json({ message: 'No sensor data found' });
+    }
+
+    res.json(latestData);
+  } catch (error) {
+    console.error(error.message);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get sensor data history
+app.get('/api/sensor/history', auth, async (req, res) => {
+  try {
+    const { limit = 50, skip = 0, startDate, endDate } = req.query;
+
+    let query = { userId: req.user.id };
+
+    // Add date range filter if provided
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) query.createdAt.$gte = new Date(startDate);
+      if (endDate) query.createdAt.$lte = new Date(endDate);
+    }
+
+    const sensorData = await SensorData.find(query)
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip(parseInt(skip));
+
+    const total = await SensorData.countDocuments(query);
+
+    res.json({
+      data: sensorData,
+      total,
+      hasMore: (parseInt(skip) + parseInt(limit)) < total
+    });
+  } catch (error) {
+    console.error(error.message);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get sensor data analytics
+app.get('/api/sensor/analytics', auth, async (req, res) => {
+  try {
+    const { period = '24h' } = req.query;
+    
+    // Calculate date range based on period
+    const now = new Date();
+    let startDate;
+    
+    switch (period) {
+      case '1h':
+        startDate = new Date(now.getTime() - 60 * 60 * 1000);
+        break;
+      case '24h':
+        startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        break;
+      case '7d':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '30d':
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    }
+
+    const analytics = await SensorData.aggregate([
+      {
+        $match: {
+          userId: new mongoose.Types.ObjectId(req.user.id),
+          createdAt: { $gte: startDate }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          avgHeartRate: { $avg: '$heartRate' },
+          maxHeartRate: { $max: '$heartRate' },
+          minHeartRate: { $min: '$heartRate' },
+          avgTemperature: { $avg: '$temperature' },
+          maxTemperature: { $max: '$temperature' },
+          minTemperature: { $min: '$temperature' },
+          avgBatteryLevel: { $avg: '$batteryLevel' },
+          emergencyCount: { $sum: { $cond: ['$emergencyTriggered', 1, 0] } },
+          fallCount: { $sum: { $cond: ['$fallDetected', 1, 0] } },
+          totalReadings: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const result = analytics[0] || {
+      avgHeartRate: 0,
+      maxHeartRate: 0,
+      minHeartRate: 0,
+      avgTemperature: 0,
+      maxTemperature: 0,
+      minTemperature: 0,
+      avgBatteryLevel: 0,
+      emergencyCount: 0,
+      fallCount: 0,
+      totalReadings: 0
+    };
+
+    res.json({
+      period,
+      analytics: result,
+      dateRange: { startDate, endDate: now }
+    });
+  } catch (error) {
+    console.error(error.message);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Demo login endpoint for testing
 app.post('/api/users/demo-login', async (req, res) => {
   try {
@@ -501,7 +961,12 @@ app.use('*', (req, res) => {
       'PUT /api/users/profile',
       'GET /api/activities',
       'POST /api/activities',
-      'GET /api/activities/stats'
+      'GET /api/activities/stats',
+      'POST /receive',
+      'POST /api/sensor/data',
+      'GET /api/sensor/latest',
+      'GET /api/sensor/history',
+      'GET /api/sensor/analytics'
     ]
   });
 });
