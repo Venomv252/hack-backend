@@ -1333,8 +1333,11 @@ app.post('/api/sensor/test', async (req, res) => {
 // Emergency SMS endpoint - Share location with emergency contacts
 app.post('/api/emergency/share-location', auth, async (req, res) => {
   try {
+    console.log('🚨 Emergency location share request received for user:', req.user.id);
+    
     // Check if Twilio is configured
     if (!twilioClient) {
+      console.log('❌ Twilio not configured');
       return res.status(503).json({ 
         message: 'SMS service is not configured. Please contact administrator.',
         error: 'Twilio credentials not available'
@@ -1344,16 +1347,22 @@ app.post('/api/emergency/share-location', auth, async (req, res) => {
     // Get user with emergency contacts
     const user = await User.findById(req.user.id);
     if (!user) {
+      console.log('❌ User not found:', req.user.id);
       return res.status(404).json({ message: 'User not found' });
     }
+
+    console.log('✅ User found:', user.name, 'Emergency contacts:', user.emergencyContacts?.length || 0);
 
     // Get latest sensor data for location
     const latestSensorData = await SensorData.findOne({ userId: req.user.id })
       .sort({ createdAt: -1 });
 
     if (!latestSensorData || !latestSensorData.location) {
+      console.log('❌ No location data available for user:', req.user.id);
       return res.status(404).json({ message: 'No location data available' });
     }
+
+    console.log('✅ Location data found:', latestSensorData.location);
 
     const { latitude, longitude } = latestSensorData.location;
     const googleMapsLink = `https://maps.google.com/maps?q=${latitude},${longitude}`;
@@ -1431,7 +1440,8 @@ app.post('/api/emergency/share-location', auth, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Emergency SMS error:', error);
+    console.error('🚨 Emergency SMS error:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({ 
       message: 'Failed to send emergency SMS',
       error: error.message 
