@@ -5,23 +5,65 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
+// Environment validation
+const requiredEnvVars = ['MONGODB_URI'];
+const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
+
+if (missingEnvVars.length > 0) {
+  console.error('❌ Missing required environment variables:', missingEnvVars);
+  console.error('Please check your .env file or environment configuration');
+  if (process.env.NODE_ENV === 'production') {
+    process.exit(1);
+  }
+}
+
 
 const app = express();
 
 // Middleware
-app.use(cors());
-app.use(express.json());
+app.use(cors({
+  origin: process.env.FRONTEND_URL || '*',
+  credentials: true
+}));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Request logging middleware
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  next();
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Error:', err);
+  res.status(500).json({ 
+    message: 'Internal server error',
+    error: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+  });
+});
 
 // MongoDB Connection
 const connectDB = async () => {
   try {
-    // You can replace this with your MongoDB URL later
     const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/smartsafetyband';
-    await mongoose.connect(mongoURI);
-    console.log('MongoDB Connected Successfully');
+    
+    const options = {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
+      socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
+      bufferMaxEntries: 0, // Disable mongoose buffering
+      bufferCommands: false, // Disable mongoose buffering
+    };
+
+    await mongoose.connect(mongoURI, options);
+    console.log('✅ MongoDB Connected Successfully');
+    console.log(`📍 Database: ${mongoose.connection.name}`);
   } catch (error) {
-    console.error('MongoDB Connection Error:', error.message);
-    process.exit(1);
+    console.error('❌ MongoDB Connection Error:', error.message);
+    console.error('Full error:', error);
+    throw error; // Don't exit immediately, let the caller handle it
   }
 };
 
@@ -428,10 +470,76 @@ app.post('/api/users/demo-login', async (req, res) => {
   }
 });
 
-// Connect to database and start server
-connectDB().then(() => {
-  const PORT = process.env.PORT || 5000;
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+// Health check endpoint for Render
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'Smart Safety Band API is running!', 
+    status: 'healthy',
+    timestamp: new Date().toISOString()
   });
 });
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'healthy', 
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+  });
+});
+
+// Catch-all route for undefined endpoints
+app.use('*', (req, res) => {
+  res.status(404).json({ 
+    message: 'Route not found',
+    availableRoutes: [
+      'GET /',
+      'GET /health',
+      'POST /api/users/register',
+      'POST /api/users/login',
+      'POST /api/users/demo-login',
+      'GET /api/users/profile',
+      'PUT /api/users/profile',
+      'GET /api/activities',
+      'POST /api/activities',
+      'GET /api/activities/stats'
+    ]
+  });
+});
+
+// Connect to database and start server
+const startServer = async () => {
+  try {
+    console.log('🚀 Starting Smart Safety Band API...');
+    console.log('📊 Environment:', process.env.NODE_ENV || 'development');
+    
+    // Connect to MongoDB
+    await connectDB();
+    
+    // Start the server
+    const PORT = process.env.PORT || 5000;
+    const HOST = process.env.HOST || '0.0.0.0';
+    
+    const server = app.listen(PORT, HOST, () => {
+      console.log(`✅ Server running on ${HOST}:${PORT}`);
+      console.log(`🌐 Health check: http://${HOST}:${PORT}/health`);
+      console.log(`📡 API Base URL: http://${HOST}:${PORT}/api`);
+    });
+
+    // Graceful shutdown
+    process.on('SIGTERM', () => {
+      console.log('SIGTERM received, shutting down gracefully');
+      server.close(() => {
+        mongoose.connection.close();
+        process.exit(0);
+      });
+    });
+
+  } catch (error) {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
+};
+
+startServer();
