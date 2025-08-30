@@ -890,6 +890,96 @@ app.get('/api/sensor/analytics', auth, async (req, res) => {
   }
 });
 
+// Get dashboard sensor data summary
+app.get('/api/sensor/dashboard', auth, async (req, res) => {
+  try {
+    // Get latest sensor data
+    const latestData = await SensorData.findOne({ 
+      deviceId: { $in: ['ESP32_001', 'TEST_DEVICE'] } 
+    })
+      .sort({ createdAt: -1 })
+      .populate('userId', 'name email');
+
+    // Get recent sensor data (last 10 readings)
+    const recentData = await SensorData.find({ 
+      deviceId: { $in: ['ESP32_001', 'TEST_DEVICE'] } 
+    })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .populate('userId', 'name email');
+
+    // Calculate statistics for the last 30 minutes
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+    const stats = await SensorData.aggregate([
+      {
+        $match: {
+          deviceId: { $in: ['ESP32_001', 'TEST_DEVICE'] },
+          createdAt: { $gte: thirtyMinutesAgo }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalReadings: { $sum: 1 },
+          emergencyCount: { $sum: { $cond: ['$emergencyTriggered', 1, 0] } },
+          fallCount: { $sum: { $cond: ['$fallDetected', 1, 0] } },
+          avgHeartRate: { $avg: '$heartRate' },
+          avgTemperature: { $avg: '$temperature' },
+          avgBatteryLevel: { $avg: '$batteryLevel' }
+        }
+      }
+    ]);
+
+    const summary = stats[0] || {
+      totalReadings: 0,
+      emergencyCount: 0,
+      fallCount: 0,
+      avgHeartRate: null,
+      avgTemperature: null,
+      avgBatteryLevel: null
+    };
+
+    res.json({
+      latest: latestData ? {
+        id: latestData._id,
+        timestamp: latestData.createdAt,
+        deviceId: latestData.deviceId,
+        accelerometer: latestData.accelerometer,
+        gyroscope: latestData.gyroscope,
+        location: latestData.location,
+        heartRate: latestData.heartRate,
+        temperature: latestData.temperature,
+        batteryLevel: latestData.batteryLevel,
+        emergencyTriggered: latestData.emergencyTriggered,
+        fallDetected: latestData.fallDetected,
+        totalAcceleration: latestData.accelerometer ? 
+          Math.sqrt(latestData.accelerometer.x**2 + latestData.accelerometer.y**2 + latestData.accelerometer.z**2) : null,
+        totalRotation: latestData.gyroscope ? 
+          Math.sqrt(latestData.gyroscope.x**2 + latestData.gyroscope.y**2 + latestData.gyroscope.z**2) : null
+      } : null,
+      recent: recentData.map(data => ({
+        id: data._id,
+        timestamp: data.createdAt,
+        deviceId: data.deviceId,
+        status: data.emergencyTriggered ? 'emergency' : data.fallDetected ? 'fall' : 'normal',
+        totalAcceleration: data.accelerometer ? 
+          Math.sqrt(data.accelerometer.x**2 + data.accelerometer.y**2 + data.accelerometer.z**2) : null,
+        totalRotation: data.gyroscope ? 
+          Math.sqrt(data.gyroscope.x**2 + data.gyroscope.y**2 + data.gyroscope.z**2) : null
+      })),
+      summary,
+      dataRetentionInfo: {
+        retentionPeriod: '30 minutes',
+        nextCleanup: 'Every 5 minutes',
+        message: 'Sensor data is automatically deleted after 30 minutes'
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching dashboard sensor data:', error.message);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Get all ESP32 sensor data for recent activity
 app.get('/api/sensor/esp32/recent', auth, async (req, res) => {
   try {
@@ -1119,10 +1209,29 @@ app.use('*', (req, res) => {
   });
 });
 
+// Auto-delete sensor data older than 30 minutes
+const cleanupOldSensorData = async () => {
+  try {
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+    const result = await SensorData.deleteMany({
+      createdAt: { $lt: thirtyMinutesAgo }
+    });
+    
+    if (result.deletedCount > 0) {
+      console.log(`🧹 Cleaned up ${result.deletedCount} old sensor data records`);
+    }
+  } catch (error) {
+    console.error('❌ Error cleaning up sensor data:', error.message);
+  }
+};
+
+// Run cleanup every 5 minutes
+setInterval(cleanupOldSensorData, 5 * 60 * 1000);
+
 // Connect to database and start server
 const startServer = async () => {
   try {
-    console.log('🚀 Starting Smart Safety Band API...');
+    console.log('🚀 Starting Smart SafetyBand API...');
     console.log('📊 Environment:', process.env.NODE_ENV || 'development');
     
     // Connect to MongoDB
